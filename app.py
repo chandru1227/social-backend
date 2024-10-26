@@ -7,8 +7,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-# Set up YouTube API key and build the API service
-API_KEY = 'AIzaSyAn0D-UjVomkTZqXm_Klh4Ui3SJm84eiH0'  # Replace with your actual API key
+API_KEY = 'AIzaSyAn0D-UjVomkTZqXm_Klh4Ui3SJm84eiH0' 
 youtube = build('youtube', 'v3', developerKey=API_KEY)
 
 # Sentiment Analysis Setup
