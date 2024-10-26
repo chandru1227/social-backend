@@ -14,6 +14,10 @@ youtube = build('youtube', 'v3', developerKey=API_KEY)
 sentiment_pipeline = pipeline("sentiment-analysis", model="nlptown/bert-base-multilingual-uncased-sentiment")
 
 # Route to fetch data by Channel ID
+@app.route('/')
+def hello_world():
+    return "chandru"
+
 @app.route('/youtube/<channel_id>', methods=['POST'])
 def fetch_channel_data(channel_id):
     try:
