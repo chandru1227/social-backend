@@ -3,26 +3,35 @@ from googleapiclient.discovery import build
 from transformers import pipeline
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv
 
+load_dotenv()  # Load environment variables from .env file
+
+API_KEY = os.getenv('API_KEY')  # API key from .env file
+PORT = int(os.getenv('PORT', 5000)) # Access PORT from .env file or use default
 app = Flask(__name__)
 CORS(app)
-
-API_KEY = 'AIzaSyBzNcNMRHosYrKtwX2GrMkCaOWOzLwlupI' 
 youtube = build('youtube', 'v3', developerKey=API_KEY)
 
-# Sentiment Analysis Setup
-sentiment_pipeline = pipeline("sentiment-analysis", model="nlptown/bert-base-multilingual-uncased-sentiment")
+# Lazy-loading Sentiment Analysis Pipeline to save memory
+sentiment_pipeline = None
 
-# Route to fetch data by Channel ID
+def get_sentiment_pipeline():
+    global sentiment_pipeline
+    if sentiment_pipeline is None:
+        sentiment_pipeline = pipeline(
+            "sentiment-analysis", 
+            model="nlptown/bert-base-multilingual-uncased-sentiment"
+        )
+    return sentiment_pipeline
+
 @app.route('/')
 def hello_world():
     return "Hello, World!"
 
-
 @app.route('/youtube/<channel_id>', methods=['POST'])
 def fetch_channel_data(channel_id):
     try:
-        # Fetch channel details
         channel_response = youtube.channels().list(
             id=channel_id,
             part='snippet,statistics'
@@ -38,10 +47,8 @@ def fetch_channel_data(channel_id):
             'Total_videos': int(channel_response['items'][0]['statistics'].get('videoCount', 0)),
         }]
 
-        # Fetch video details with pagination
         video_ids = []
         next_page_token = None
-
         while True:
             video_response = youtube.search().list(
                 channelId=channel_id,
@@ -62,7 +69,6 @@ def fetch_channel_data(channel_id):
         if not video_ids:
             return jsonify({'error': 'No videos found for this channel.'}), 404
 
-        # Fetch statistics for each video in chunks to avoid API limits
         video_details = []
         for i in range(0, len(video_ids), 50):
             chunk = video_ids[i:i+50]
@@ -74,7 +80,6 @@ def fetch_channel_data(channel_id):
             for video in videos['items']:
                 snippet = video['snippet']
                 stats = video['statistics']
-
                 video_data = {
                     'Title': snippet['title'],
                     'Published_date': snippet['publishedAt'],
@@ -90,12 +95,9 @@ def fetch_channel_data(channel_id):
         print(f"Error fetching channel data: {e}")
         return jsonify({'error': str(e)}), 500
 
-
-# Route to fetch top videos by search term
 @app.route('/youtube/search/<search_term>', methods=['POST'])
 def search_top_videos(search_term):
     try:
-        # Fetch videos related to the search term
         search_response = youtube.search().list(
             q=search_term,
             part='snippet',
@@ -103,7 +105,6 @@ def search_top_videos(search_term):
             maxResults=10
         ).execute()
 
-        # Retrieve video IDs and thumbnails
         top_videos = []
         for item in search_response['items']:
             video_data = {
@@ -120,12 +121,9 @@ def search_top_videos(search_term):
         print(f"Error fetching video data: {e}")
         return jsonify({'error': 'Error fetching video data'}), 500
 
-
-# Route to analyze comments of a video
 @app.route('/youtube/comments/<video_id>', methods=['POST'])
 def analyze_video_comments(video_id):
     try:
-        print("Received Video ID:", video_id)  # Debug log
         comments = fetch_all_comments(video_id)
         total_comments = len(comments)
 
@@ -136,9 +134,7 @@ def analyze_video_comments(video_id):
                 'negative_comments': 0
             })
 
-        # Analyze comments
         analysis_results = analyze_comments(comments)
-
         positive_comments = sum(1 for result in analysis_results if result['sentiment_category'] == 'Positive')
         negative_comments = sum(1 for result in analysis_results if result['sentiment_category'] == 'Negative')
 
@@ -152,25 +148,21 @@ def analyze_video_comments(video_id):
         print(f"Error analyzing comments: {e}")
         return jsonify({'error': str(e)}), 500
 
-
 def fetch_all_comments(video_id):
     comments = []
     try:
-        # Initial API request
         response = youtube.commentThreads().list(
             part='snippet',
             videoId=video_id,
             textFormat='plainText',
-            maxResults=100  # Maximum allowed per request
+            maxResults=100
         ).execute()
         
-        # Continue fetching comments until there are no more pages
         while response:
             for item in response.get('items', []):
                 comment = item['snippet']['topLevelComment']['snippet']['textDisplay']
                 comments.append(comment)
-            
-            # Check if there's another page of comments
+
             if 'nextPageToken' in response:
                 response = youtube.commentThreads().list(
                     part='snippet',
@@ -180,63 +172,45 @@ def fetch_all_comments(video_id):
                     pageToken=response['nextPageToken']
                 ).execute()
             else:
-                # No more comments to fetch
                 break
 
-        print(f"Fetched a total of {len(comments)} comments.")
     except Exception as e:
         print(f"Error fetching comments: {e}")
     
     return comments
 
-
 def analyze_comments(comments):
     results = []
-    max_length = 512  # Set the maximum token length
+    max_length = 512
 
     for comment in comments:
-        # Truncate comment to the max length to avoid tensor size errors
         truncated_comment = comment[:max_length]
         
         try:
-            sentiment = sentiment_pipeline(truncated_comment)[0]
+            sentiment = get_sentiment_pipeline()(truncated_comment)[0]
             sentiment_label = sentiment.get('label')
             sentiment_score = sentiment.get('score')
-            
-            # Map sentiment to stars and classify sentiment
-            if sentiment_label == '0 stars':
-                stars = 0
-                sentiment_category = 'Negative'
-            elif sentiment_label == '1 star':
-                stars = 1
+
+            if sentiment_label in ['0 stars', '1 star']:
                 sentiment_category = 'Negative'
             elif sentiment_label == '2 stars':
-                stars = 2
                 sentiment_category = 'Neutral'
-            elif sentiment_label == '3 stars':
-                stars = 3
-                sentiment_category = 'Positive'
-            elif sentiment_label == '4 stars':
-                stars = 4
-                sentiment_category = 'Positive'
             else:
-                stars = 5
                 sentiment_category = 'Positive'
-            
+
             results.append({
                 'comment': truncated_comment,
                 'sentiment': sentiment_label,
                 'score': sentiment_score,
-                'stars': stars,
                 'sentiment_category': sentiment_category
             })
         
         except Exception as e:
             print(f"Error analyzing comment: {e}")
-            continue  # Skip this comment if it fails
+            continue
 
     return results
 
-
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
