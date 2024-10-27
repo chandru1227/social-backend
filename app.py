@@ -7,7 +7,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-API_KEY = 'AIzaSyAn0D-UjVomkTZqXm_Klh4Ui3SJm84eiH0' 
+API_KEY = 'AIzaSyBzNcNMRHosYrKtwX2GrMkCaOWOzLwlupI' 
 youtube = build('youtube', 'v3', developerKey=API_KEY)
 
 # Sentiment Analysis Setup
@@ -16,7 +16,8 @@ sentiment_pipeline = pipeline("sentiment-analysis", model="nlptown/bert-base-mul
 # Route to fetch data by Channel ID
 @app.route('/')
 def hello_world():
-    return "chandru"
+    return "Hello, World!"
+
 
 @app.route('/youtube/<channel_id>', methods=['POST'])
 def fetch_channel_data(channel_id):
@@ -26,8 +27,6 @@ def fetch_channel_data(channel_id):
             id=channel_id,
             part='snippet,statistics'
         ).execute()
-
-        print("Channel Response:", channel_response)  # Debug log
 
         if 'items' not in channel_response or not channel_response['items']:
             return jsonify({'error': 'No channel found with the provided ID.'}), 404
@@ -39,41 +38,51 @@ def fetch_channel_data(channel_id):
             'Total_videos': int(channel_response['items'][0]['statistics'].get('videoCount', 0)),
         }]
 
-        # Fetch video details for the channel
-        video_response = youtube.search().list(
-            channelId=channel_id,
-            part='snippet',
-            order='date',
-            maxResults=10
-        ).execute()
-
+        # Fetch video details with pagination
         video_ids = []
-        for item in video_response.get('items', []):
-            if 'videoId' in item['id']:
-                video_ids.append(item['id']['videoId'])
+        next_page_token = None
+
+        while True:
+            video_response = youtube.search().list(
+                channelId=channel_id,
+                part='snippet',
+                order='date',
+                maxResults=50,
+                pageToken=next_page_token
+            ).execute()
+
+            for item in video_response.get('items', []):
+                if 'videoId' in item['id']:
+                    video_ids.append(item['id']['videoId'])
+
+            next_page_token = video_response.get('nextPageToken')
+            if not next_page_token:
+                break
 
         if not video_ids:
             return jsonify({'error': 'No videos found for this channel.'}), 404
 
-        # Fetch statistics for each video
-        videos = youtube.videos().list(
-            id=','.join(video_ids),
-            part='snippet,statistics'
-        ).execute()
-
+        # Fetch statistics for each video in chunks to avoid API limits
         video_details = []
-        for video in videos['items']:
-            snippet = video['snippet']
-            stats = video['statistics']
+        for i in range(0, len(video_ids), 50):
+            chunk = video_ids[i:i+50]
+            videos = youtube.videos().list(
+                id=','.join(chunk),
+                part='snippet,statistics'
+            ).execute()
 
-            video_data = {
-                'Title': snippet['title'],
-                'Published_date': snippet['publishedAt'],
-                'Views': int(stats.get('viewCount', 0)),
-                'Likes': int(stats.get('likeCount', 0)),
-                'Comments': int(stats.get('commentCount', 0)),
-            }
-            video_details.append(video_data)
+            for video in videos['items']:
+                snippet = video['snippet']
+                stats = video['statistics']
+
+                video_data = {
+                    'Title': snippet['title'],
+                    'Published_date': snippet['publishedAt'],
+                    'Views': int(stats.get('viewCount', 0)),
+                    'Likes': int(stats.get('likeCount', 0)),
+                    'Comments': int(stats.get('commentCount', 0)),
+                }
+                video_details.append(video_data)
 
         return jsonify({'channel_stats': channel_stats, 'video_details': video_details})
 
@@ -183,39 +192,49 @@ def fetch_all_comments(video_id):
 
 def analyze_comments(comments):
     results = []
+    max_length = 512  # Set the maximum token length
+
     for comment in comments:
-        sentiment = sentiment_pipeline(comment)[0]
-        sentiment_label = sentiment['label']
-        sentiment_score = sentiment['score']
+        # Truncate comment to the max length to avoid tensor size errors
+        truncated_comment = comment[:max_length]
         
-        # Map sentiment to stars and classify sentiment
-        if sentiment_label == '0 stars':
-            stars = 0
-            sentiment_category = 'Negative'
-        elif sentiment_label == '1 star':
-            stars = 1
-            sentiment_category = 'Negative'
-        elif sentiment_label == '2 stars':
-            stars = 2
-            sentiment_category = 'Neutral'
-        elif sentiment_label == '3 stars':
-            stars = 3
-            sentiment_category = 'Positive'
-        elif sentiment_label == '4 stars':
-            stars = 4
-            sentiment_category = 'Positive'
-        else:
-            stars = 5
-            sentiment_category = 'Positive'
+        try:
+            sentiment = sentiment_pipeline(truncated_comment)[0]
+            sentiment_label = sentiment.get('label')
+            sentiment_score = sentiment.get('score')
+            
+            # Map sentiment to stars and classify sentiment
+            if sentiment_label == '0 stars':
+                stars = 0
+                sentiment_category = 'Negative'
+            elif sentiment_label == '1 star':
+                stars = 1
+                sentiment_category = 'Negative'
+            elif sentiment_label == '2 stars':
+                stars = 2
+                sentiment_category = 'Neutral'
+            elif sentiment_label == '3 stars':
+                stars = 3
+                sentiment_category = 'Positive'
+            elif sentiment_label == '4 stars':
+                stars = 4
+                sentiment_category = 'Positive'
+            else:
+                stars = 5
+                sentiment_category = 'Positive'
+            
+            results.append({
+                'comment': truncated_comment,
+                'sentiment': sentiment_label,
+                'score': sentiment_score,
+                'stars': stars,
+                'sentiment_category': sentiment_category
+            })
         
-        results.append({
-            'comment': comment,
-            'sentiment': sentiment_label,
-            'score': sentiment_score,
-            'stars': stars,
-            'sentiment_category': sentiment_category
-        })
-    
+        except Exception as e:
+            print(f"Error analyzing comment: {e}")
+            continue  # Skip this comment if it fails
+
     return results
 
 
