@@ -128,15 +128,17 @@ def analyze_video_comments(video_id):
         total_comments = len(comments)
 
         if total_comments == 0:
-          return jsonify({
-            'total_comments': total_comments,
-            'positive_comments': positive_comments,
-            'negative_comments': negative_comments
-        })
+            return jsonify({
+                'total_comments': total_comments,
+                'positive_comments': 0,
+                'negative_comments': 0
+            })
 
         analysis_results = analyze_comments(comments)
-        positive_comments = sum(1 for result in analysis_results if result['sentiment_category'] == 'Positive')
-        negative_comments = sum(1 for result in analysis_results if result['sentiment_category'] == 'Negative')
+
+        # Initialize counts to 0 in case analysis_results is empty
+        positive_comments = sum(1 for result in analysis_results if result['sentiment_category'] == 'Positive') if analysis_results else 0
+        negative_comments = sum(1 for result in analysis_results if result['sentiment_category'] == 'Negative') if analysis_results else 0
 
         return jsonify({
             'total_comments': total_comments,
@@ -147,6 +149,7 @@ def analyze_video_comments(video_id):
     except Exception as e:
         print(f"Error analyzing comments: {e}")
         return jsonify({'error': str(e)}), 500
+
 
 def fetch_all_comments(video_id):
     comments = []
@@ -213,4 +216,6 @@ def analyze_comments(comments):
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)#54.226.246.141
+    app.run(host="0.0.0.0", port=port, debug=True)
+
+
