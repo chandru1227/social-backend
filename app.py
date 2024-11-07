@@ -128,11 +128,11 @@ def analyze_video_comments(video_id):
         total_comments = len(comments)
 
         if total_comments == 0:
-            return jsonify({
-                'total_comments': total_comments,
-                'positive_comments': 0,
-                'negative_comments': 0
-            })
+          return jsonify({
+            'total_comments': total_comments,
+            'positive_comments': positive_comments,
+            'negative_comments': negative_comments
+        })
 
         analysis_results = analyze_comments(comments)
         positive_comments = sum(1 for result in analysis_results if result['sentiment_category'] == 'Positive')
@@ -213,4 +213,4 @@ def analyze_comments(comments):
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=True)#54.226.246.141
